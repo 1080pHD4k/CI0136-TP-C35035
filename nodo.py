@@ -28,6 +28,7 @@ def es_nombre_seguro(nombre):
     return True
 
 def manejar_cliente(conexion, direccion, carpeta_compartidos):
+    conexion.settimeout(10)
     try:
         linea = leer_linea(conexion)
         if linea is None:
@@ -45,7 +46,7 @@ def manejar_cliente(conexion, direccion, carpeta_compartidos):
         elif comando == "OBTENER":
             nombre_archivo = solicitud.get("archivo", "")
             if not es_nombre_seguro(nombre_archivo):
-                enviar_json(conexion, {"estado": "ERROR", "mensaje": "nombre de archivo inválido"})
+                enviar_json(conexion, {"estado": "ERROR", "mensaje": "nombre inválido"})
                 return
 
             ruta = carpeta_compartidos / nombre_archivo
@@ -59,7 +60,7 @@ def manejar_cliente(conexion, direccion, carpeta_compartidos):
         else:
             enviar_json(conexion, {"estado": "ERROR", "mensaje": "comando no reconocido"})
     except Exception as e:
-        print(f"[SERVIDOR] Error atendiendo a {direccion}: {e}")
+        print(f"Error con {direccion}: {e}")
     finally:
         conexion.close()
 
@@ -69,7 +70,7 @@ def recibir_bytes_exactos(conexion, cantidad):
         faltan = cantidad - len(datos)
         fragmento = conexion.recv(min(faltan, 65536))
         if not fragmento:
-            raise ConnectionError("Conexión cerrada antes de recibir todos los bytes esperados")
+            raise ConnectionError("conexión cerrada antes de terminar")
         datos += fragmento
     return datos
 
@@ -97,12 +98,12 @@ def descargar_remoto(puerto_remoto, carpeta_descargas, nombre_archivo):
 
             linea = leer_linea(s)
             if linea is None:
-                print("[CLIENTE] El nodo remoto cerró la conexión sin responder.")
+                print("Sin respuesta del nodo remoto")
                 return
             respuesta = json.loads(linea)
 
             if respuesta.get("estado") != "OK":
-                print("[CLIENTE] Error:", respuesta.get("mensaje"))
+                print("Error:", respuesta.get("mensaje"))
                 return
 
             tamano = respuesta["tamano"]
@@ -111,13 +112,13 @@ def descargar_remoto(puerto_remoto, carpeta_descargas, nombre_archivo):
             carpeta_descargas.mkdir(parents=True, exist_ok=True)
             destino = carpeta_descargas / nombre_archivo
             destino.write_bytes(contenido)
-            print(f"[CLIENTE] Descargado '{nombre_archivo}' ({len(contenido)} bytes) en {destino}")
+            print(f"Descargado {nombre_archivo} ({len(contenido)} bytes)")
     except socket.timeout:
-        print("[CLIENTE] Error: el nodo remoto no respondió a tiempo.")
+        print("Error: tiempo agotado")
     except ConnectionRefusedError:
-        print("[CLIENTE] Error: el nodo remoto no está disponible.")
+        print("Error: nodo remoto no disponible")
     except Exception as e:
-        print(f"[CLIENTE] Error inesperado: {e}")
+        print(f"Error: {e}")
 
 def listar_remoto(puerto_remoto):
     try:
@@ -127,30 +128,30 @@ def listar_remoto(puerto_remoto):
             enviar_json(s, {"comando": "LISTAR"})
             linea = leer_linea(s)
             if linea is None:
-                print("[CLIENTE] El nodo remoto cerró la conexión sin responder.")
+                print("Sin respuesta del nodo remoto")
                 return
             respuesta = json.loads(linea)
             if respuesta.get("estado") == "OK":
-                print("Archivos remotos:", respuesta.get("archivos"))
+                print("Remotos:", respuesta.get("archivos"))
             else:
-                print("[CLIENTE] Error:", respuesta.get("mensaje"))
+                print("Error:", respuesta.get("mensaje"))
     except socket.timeout:
-        print("[CLIENTE] Error: el nodo remoto no respondió a tiempo.")
+        print("Error: tiempo agotado")
     except ConnectionRefusedError:
-        print("[CLIENTE] Error: el nodo remoto no está disponible.")
+        print("Error: nodo remoto no disponible")
     except Exception as e:
-        print(f"[CLIENTE] Error inesperado: {e}")
+        print(f"Error: {e}")
 
 def iniciar_servidor(puerto, carpeta_compartidos):
     servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     servidor.bind(("0.0.0.0", puerto))
     servidor.listen(5)
-    print(f"[SERVIDOR] Escuchando en el puerto {puerto}...")
+    print(f"Escuchando en puerto {puerto}")
 
     while True:
         conexion, direccion = servidor.accept()
-        print(f"[SERVIDOR] Conexión entrante de {direccion}")
+        print(f"Conexión de {direccion}")
         hilo = threading.Thread(
             target=manejar_cliente,
             args=(conexion, direccion, carpeta_compartidos),
@@ -161,35 +162,34 @@ def iniciar_servidor(puerto, carpeta_compartidos):
 
 def menu(id_nodo, puerto_remoto, carpeta_compartidos, carpeta_descargas):
     while True:
-        print("\n--- Menú ---")
-        print("1. Listar archivos locales")
-        print("2. Listar archivos remotos")
-        print("3. Descargar archivo remoto")
+        print()
+        print("1. Listar locales")
+        print("2. Listar remotos")
+        print("3. Descargar")
         print("4. Salir")
-        opcion = input("Elegí una opción: ").strip()
+        opcion = input("Opción: ").strip()
 
         if opcion == "1":
             archivos = [f.name for f in carpeta_compartidos.iterdir() if f.is_file()]
-            print("Archivos locales:", archivos)
+            print("Locales:", archivos)
         elif opcion == "2":
             listar_remoto(puerto_remoto)
         elif opcion == "3":
-            nombre_archivo = input("Nombre del archivo a descargar: ").strip()
+            nombre_archivo = input("Archivo: ").strip()
             if nombre_archivo:
                 descargar_remoto(puerto_remoto, carpeta_descargas, nombre_archivo)
             else:
-                print("Nombre de archivo inválido.")
+                print("Nombre inválido")
         elif opcion == "4":
-            print("Saliendo...")
             sys.exit(0)
         else:
-            print("Opción inválida.")
+            print("Opción inválida")
 
 
 def main():
     args = parsear_argumentos()
-    print(f"CARNE: {CARNE}")
-    print(f"Nodo: {args.id} | Puerto propio: {args.puerto} | Puerto remoto: {args.remoto}")
+    print(f"Carné: {CARNE}")
+    print(f"Nodo {args.id}, puerto {args.puerto}, remoto {args.remoto}")
 
     carpeta_compartidos = Path(args.id) / "compartidos"
     carpeta_compartidos.mkdir(parents=True, exist_ok=True)
