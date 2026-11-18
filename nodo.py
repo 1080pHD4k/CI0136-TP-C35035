@@ -160,7 +160,7 @@ def iniciar_servidor(puerto, carpeta_compartidos):
         hilo.start()
 
 
-def menu(id_nodo, puerto_remoto, carpeta_compartidos, carpeta_descargas):
+def menu(puerto_remoto, carpeta_compartidos, carpeta_descargas):
     while True:
         print()
         print("1. Listar locales")
@@ -202,7 +202,7 @@ def main():
     hilo_servidor.start()
 
     carpeta_descargas = Path(args.id) / "descargas"
-    menu(args.id, args.remoto, carpeta_compartidos, carpeta_descargas)
+    menu(args.remoto, carpeta_compartidos, carpeta_descargas)
 
 
 if __name__ == "__main__":
