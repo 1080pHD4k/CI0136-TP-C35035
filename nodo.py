@@ -1,0 +1,209 @@
+import argparse
+import json
+import socket
+import sys
+import threading
+from pathlib import Path
+
+CARNE = "C35035"
+
+def parsear_argumentos():
+    parser = argparse.ArgumentParser(description="Nodo P2P - Compartidor de archivos")
+    parser.add_argument("--id", required=True, help="Identificador del nodo (ej: nodo1)")
+    parser.add_argument("--puerto", type=int, required=True, help="Puerto en el que este nodo escucha")
+    parser.add_argument("--remoto", type=int, required=True, help="Puerto del nodo remoto")
+    return parser.parse_args()
+
+def es_nombre_seguro(nombre):
+    if not nombre:
+        return False
+    if "/" in nombre or "\\" in nombre:
+        return False
+    if nombre in ("..", "."):
+        return False
+    if ".." in Path(nombre).parts:
+        return False
+    if Path(nombre).is_absolute():
+        return False
+    return True
+
+def manejar_cliente(conexion, direccion, carpeta_compartidos):
+    try:
+        linea = leer_linea(conexion)
+        if linea is None:
+            return
+        try:
+            solicitud = json.loads(linea)
+        except json.JSONDecodeError:
+            enviar_json(conexion, {"estado": "ERROR", "mensaje": "comando no reconocido"})
+            return
+
+        comando = solicitud.get("comando")
+        if comando == "LISTAR":
+            archivos = [f.name for f in carpeta_compartidos.iterdir() if f.is_file()]
+            enviar_json(conexion, {"estado": "OK", "archivos": archivos})
+        elif comando == "OBTENER":
+            nombre_archivo = solicitud.get("archivo", "")
+            if not es_nombre_seguro(nombre_archivo):
+                enviar_json(conexion, {"estado": "ERROR", "mensaje": "nombre de archivo inválido"})
+                return
+
+            ruta = carpeta_compartidos / nombre_archivo
+            if not ruta.is_file():
+                enviar_json(conexion, {"estado": "ERROR", "mensaje": "archivo no encontrado"})
+                return
+
+            contenido = ruta.read_bytes()
+            enviar_json(conexion, {"estado": "OK", "tamano": len(contenido)})
+            conexion.sendall(contenido)
+        else:
+            enviar_json(conexion, {"estado": "ERROR", "mensaje": "comando no reconocido"})
+    except Exception as e:
+        print(f"[SERVIDOR] Error atendiendo a {direccion}: {e}")
+    finally:
+        conexion.close()
+
+def recibir_bytes_exactos(conexion, cantidad):
+    datos = b""
+    while len(datos) < cantidad:
+        faltan = cantidad - len(datos)
+        fragmento = conexion.recv(min(faltan, 65536))
+        if not fragmento:
+            raise ConnectionError("Conexión cerrada antes de recibir todos los bytes esperados")
+        datos += fragmento
+    return datos
+
+def leer_linea(conexion):
+    buffer = b""
+    while b"\n" not in buffer:
+        fragmento = conexion.recv(1)
+        if not fragmento:
+            return None
+        buffer += fragmento
+    linea, _, _ = buffer.partition(b"\n")
+    return linea.decode("utf-8")
+
+
+def enviar_json(conexion, objeto):
+    datos = (json.dumps(objeto) + "\n").encode("utf-8")
+    conexion.sendall(datos)
+
+def descargar_remoto(puerto_remoto, carpeta_descargas, nombre_archivo):
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(10)
+            s.connect(("localhost", puerto_remoto))
+            enviar_json(s, {"comando": "OBTENER", "archivo": nombre_archivo})
+
+            linea = leer_linea(s)
+            if linea is None:
+                print("[CLIENTE] El nodo remoto cerró la conexión sin responder.")
+                return
+            respuesta = json.loads(linea)
+
+            if respuesta.get("estado") != "OK":
+                print("[CLIENTE] Error:", respuesta.get("mensaje"))
+                return
+
+            tamano = respuesta["tamano"]
+            contenido = recibir_bytes_exactos(s, tamano)
+
+            carpeta_descargas.mkdir(parents=True, exist_ok=True)
+            destino = carpeta_descargas / nombre_archivo
+            destino.write_bytes(contenido)
+            print(f"[CLIENTE] Descargado '{nombre_archivo}' ({len(contenido)} bytes) en {destino}")
+    except socket.timeout:
+        print("[CLIENTE] Error: el nodo remoto no respondió a tiempo.")
+    except ConnectionRefusedError:
+        print("[CLIENTE] Error: el nodo remoto no está disponible.")
+    except Exception as e:
+        print(f"[CLIENTE] Error inesperado: {e}")
+
+def listar_remoto(puerto_remoto):
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(5)
+            s.connect(("localhost", puerto_remoto))
+            enviar_json(s, {"comando": "LISTAR"})
+            linea = leer_linea(s)
+            if linea is None:
+                print("[CLIENTE] El nodo remoto cerró la conexión sin responder.")
+                return
+            respuesta = json.loads(linea)
+            if respuesta.get("estado") == "OK":
+                print("Archivos remotos:", respuesta.get("archivos"))
+            else:
+                print("[CLIENTE] Error:", respuesta.get("mensaje"))
+    except socket.timeout:
+        print("[CLIENTE] Error: el nodo remoto no respondió a tiempo.")
+    except ConnectionRefusedError:
+        print("[CLIENTE] Error: el nodo remoto no está disponible.")
+    except Exception as e:
+        print(f"[CLIENTE] Error inesperado: {e}")
+
+def iniciar_servidor(puerto, carpeta_compartidos):
+    servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    servidor.bind(("0.0.0.0", puerto))
+    servidor.listen(5)
+    print(f"[SERVIDOR] Escuchando en el puerto {puerto}...")
+
+    while True:
+        conexion, direccion = servidor.accept()
+        print(f"[SERVIDOR] Conexión entrante de {direccion}")
+        hilo = threading.Thread(
+            target=manejar_cliente,
+            args=(conexion, direccion, carpeta_compartidos),
+            daemon=True,
+        )
+        hilo.start()
+
+
+def menu(id_nodo, puerto_remoto, carpeta_compartidos, carpeta_descargas):
+    while True:
+        print("\n--- Menú ---")
+        print("1. Listar archivos locales")
+        print("2. Listar archivos remotos")
+        print("3. Descargar archivo remoto")
+        print("4. Salir")
+        opcion = input("Elegí una opción: ").strip()
+
+        if opcion == "1":
+            archivos = [f.name for f in carpeta_compartidos.iterdir() if f.is_file()]
+            print("Archivos locales:", archivos)
+        elif opcion == "2":
+            listar_remoto(puerto_remoto)
+        elif opcion == "3":
+            nombre_archivo = input("Nombre del archivo a descargar: ").strip()
+            if nombre_archivo:
+                descargar_remoto(puerto_remoto, carpeta_descargas, nombre_archivo)
+            else:
+                print("Nombre de archivo inválido.")
+        elif opcion == "4":
+            print("Saliendo...")
+            sys.exit(0)
+        else:
+            print("Opción inválida.")
+
+
+def main():
+    args = parsear_argumentos()
+    print(f"CARNE: {CARNE}")
+    print(f"Nodo: {args.id} | Puerto propio: {args.puerto} | Puerto remoto: {args.remoto}")
+
+    carpeta_compartidos = Path(args.id) / "compartidos"
+    carpeta_compartidos.mkdir(parents=True, exist_ok=True)
+
+    hilo_servidor = threading.Thread(
+        target=iniciar_servidor,
+        args=(args.puerto, carpeta_compartidos),
+        daemon=True,
+    )
+    hilo_servidor.start()
+
+    carpeta_descargas = Path(args.id) / "descargas"
+    menu(args.id, args.remoto, carpeta_compartidos, carpeta_descargas)
+
+
+if __name__ == "__main__":
+    main()
