@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+nodo1/descargas/*
+nodo2/descargas/*
+!nodo1/descargas/.gitkeep
+!nodo2/descargas/.gitkeep
