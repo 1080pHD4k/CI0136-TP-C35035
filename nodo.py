@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 
 CARNE = "C35035"
+VARIANTE = "P2P"
 
 def parsear_argumentos():
     parser = argparse.ArgumentParser(description="Nodo P2P - Compartidor de archivos")
@@ -27,8 +28,11 @@ def es_nombre_seguro(nombre):
         return False
     return True
 
-def manejar_cliente(conexion, direccion, carpeta_compartidos):
+def manejar_cliente(conexion, direccion, carpeta_compartidos, id_nodo="nodo"):
     conexion.settimeout(10)
+    comando = None
+    nombre_archivo = ""
+    resultado = "sin solicitud"
     try:
         linea = leer_linea(conexion)
         if linea is None:
@@ -36,6 +40,7 @@ def manejar_cliente(conexion, direccion, carpeta_compartidos):
         try:
             solicitud = json.loads(linea)
         except json.JSONDecodeError:
+            resultado = "ERROR comando no reconocido"
             enviar_json(conexion, {"estado": "ERROR", "mensaje": "comando no reconocido"})
             return
 
@@ -43,26 +48,32 @@ def manejar_cliente(conexion, direccion, carpeta_compartidos):
         if comando == "LISTAR":
             archivos = [f.name for f in carpeta_compartidos.iterdir() if f.is_file()]
             enviar_json(conexion, {"estado": "OK", "archivos": archivos})
+            resultado = f"OK {len(archivos)} archivos"
         elif comando == "OBTENER":
             nombre_archivo = solicitud.get("archivo", "")
             if not es_nombre_seguro(nombre_archivo):
+                resultado = "ERROR nombre inválido"
                 enviar_json(conexion, {"estado": "ERROR", "mensaje": "nombre inválido"})
                 return
 
             ruta = carpeta_compartidos / nombre_archivo
             if not ruta.is_file():
+                resultado = "ERROR archivo no encontrado"
                 enviar_json(conexion, {"estado": "ERROR", "mensaje": "archivo no encontrado"})
                 return
 
             contenido = ruta.read_bytes()
             enviar_json(conexion, {"estado": "OK", "tamano": len(contenido)})
             conexion.sendall(contenido)
+            resultado = f"OK {len(contenido)} bytes"
         else:
+            resultado = "ERROR comando no reconocido"
             enviar_json(conexion, {"estado": "ERROR", "mensaje": "comando no reconocido"})
     except Exception as e:
-        print(f"Error con {direccion}: {e}")
+        resultado = f"ERROR {e}"
     finally:
         conexion.close()
+        print(f"{id_nodo} <- {direccion[0]}:{direccion[1]} | {comando} {nombre_archivo} | {resultado}")
 
 def recibir_bytes_exactos(conexion, cantidad):
     datos = b""
@@ -89,7 +100,13 @@ def enviar_json(conexion, objeto):
     datos = (json.dumps(objeto) + "\n").encode("utf-8")
     conexion.sendall(datos)
 
-def descargar_remoto(puerto_remoto, carpeta_descargas, nombre_archivo):
+def descargar_remoto(id_nodo, puerto_remoto, carpeta_descargas, nombre_archivo):
+    origen = f"{id_nodo} -> {puerto_remoto} | OBTENER {nombre_archivo}"
+    destino = carpeta_descargas / nombre_archivo
+    if destino.exists():
+        if input("El archivo ya existe. ¿Sobrescribir? (s/n): ").strip().lower() != "s":
+            print(f"{origen} | Cancelado")
+            return
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(10)
@@ -98,29 +115,29 @@ def descargar_remoto(puerto_remoto, carpeta_descargas, nombre_archivo):
 
             linea = leer_linea(s)
             if linea is None:
-                print("Sin respuesta del nodo remoto")
+                print(f"{origen} | Error: sin respuesta del nodo remoto")
                 return
             respuesta = json.loads(linea)
 
             if respuesta.get("estado") != "OK":
-                print("Error:", respuesta.get("mensaje"))
+                print(f"{origen} | Error: {respuesta.get('mensaje')}")
                 return
 
             tamano = respuesta["tamano"]
             contenido = recibir_bytes_exactos(s, tamano)
 
             carpeta_descargas.mkdir(parents=True, exist_ok=True)
-            destino = carpeta_descargas / nombre_archivo
             destino.write_bytes(contenido)
-            print(f"Descargado {nombre_archivo} ({len(contenido)} bytes)")
+            print(f"{origen} | OK: Descargado {nombre_archivo} ({len(contenido)} bytes)")
     except socket.timeout:
-        print("Error: tiempo agotado")
+        print(f"{origen} | Error: tiempo agotado")
     except ConnectionRefusedError:
-        print("Error: nodo remoto no disponible")
+        print(f"{origen} | Error: nodo remoto no disponible")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"{origen} | Error: {e}")
 
-def listar_remoto(puerto_remoto):
+def listar_remoto(id_nodo, puerto_remoto):
+    origen = f"{id_nodo} -> {puerto_remoto} | LISTAR"
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(5)
@@ -128,21 +145,22 @@ def listar_remoto(puerto_remoto):
             enviar_json(s, {"comando": "LISTAR"})
             linea = leer_linea(s)
             if linea is None:
-                print("Sin respuesta del nodo remoto")
+                print(f"{origen} | Error: sin respuesta del nodo remoto")
                 return
             respuesta = json.loads(linea)
             if respuesta.get("estado") == "OK":
+                print(f"{origen} | OK")
                 print("Remotos:", respuesta.get("archivos"))
             else:
-                print("Error:", respuesta.get("mensaje"))
+                print(f"{origen} | Error: {respuesta.get('mensaje')}")
     except socket.timeout:
-        print("Error: tiempo agotado")
+        print(f"{origen} | Error: tiempo agotado")
     except ConnectionRefusedError:
-        print("Error: nodo remoto no disponible")
+        print(f"{origen} | Error: nodo remoto no disponible")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"{origen} | Error: {e}")
 
-def iniciar_servidor(puerto, carpeta_compartidos):
+def iniciar_servidor(puerto, carpeta_compartidos, id_nodo="nodo"):
     servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     servidor.bind(("0.0.0.0", puerto))
@@ -151,16 +169,15 @@ def iniciar_servidor(puerto, carpeta_compartidos):
 
     while True:
         conexion, direccion = servidor.accept()
-        print(f"Conexión de {direccion}")
         hilo = threading.Thread(
             target=manejar_cliente,
-            args=(conexion, direccion, carpeta_compartidos),
+            args=(conexion, direccion, carpeta_compartidos, id_nodo),
             daemon=True,
         )
         hilo.start()
 
 
-def menu(puerto_remoto, carpeta_compartidos, carpeta_descargas):
+def menu(id_nodo, puerto_remoto, carpeta_compartidos, carpeta_descargas):
     while True:
         print()
         print("1. Listar locales")
@@ -173,11 +190,11 @@ def menu(puerto_remoto, carpeta_compartidos, carpeta_descargas):
             archivos = [f.name for f in carpeta_compartidos.iterdir() if f.is_file()]
             print("Locales:", archivos)
         elif opcion == "2":
-            listar_remoto(puerto_remoto)
+            listar_remoto(id_nodo, puerto_remoto)
         elif opcion == "3":
             nombre_archivo = input("Archivo: ").strip()
             if nombre_archivo:
-                descargar_remoto(puerto_remoto, carpeta_descargas, nombre_archivo)
+                descargar_remoto(id_nodo, puerto_remoto, carpeta_descargas, nombre_archivo)
             else:
                 print("Nombre inválido")
         elif opcion == "4":
@@ -188,21 +205,22 @@ def menu(puerto_remoto, carpeta_compartidos, carpeta_descargas):
 
 def main():
     args = parsear_argumentos()
-    print(f"Carné: {CARNE}")
+    print(f"Carné: {CARNE} | Variante: {VARIANTE}")
     print(f"Nodo {args.id}, puerto {args.puerto}, remoto {args.remoto}")
 
     carpeta_compartidos = Path(args.id) / "compartidos"
     carpeta_compartidos.mkdir(parents=True, exist_ok=True)
+    print("Archivos compartidos:", [f.name for f in carpeta_compartidos.iterdir() if f.is_file()])
 
     hilo_servidor = threading.Thread(
         target=iniciar_servidor,
-        args=(args.puerto, carpeta_compartidos),
+        args=(args.puerto, carpeta_compartidos, args.id),
         daemon=True,
     )
     hilo_servidor.start()
 
     carpeta_descargas = Path(args.id) / "descargas"
-    menu(args.remoto, carpeta_compartidos, carpeta_descargas)
+    menu(args.id, args.remoto, carpeta_compartidos, carpeta_descargas)
 
 
 if __name__ == "__main__":
