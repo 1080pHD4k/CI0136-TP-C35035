@@ -102,3 +102,5 @@ Ambos nodos ejecutan nodo.py diferenciados por sus argumentos de línea de coman
 - El nodo remoto se tiene que configurar manualmente con `--remoto`
 
 **Uso de IA:** se utilizó Claude (Anthropic) como asistente para la creación del **diagrama** de este archivo README.md en la sección 7, y como ayuda para detectar y corregir errores de código. En su mayoría el código fue escrito, ejecutado, probado y verificado personalmente por mí.
+
+**PD**: Profe perdon si hay pocos commits, creí que iba a necesitar más commits y archivos para completar el trabajo pero solo ocupé uno (y uno de pruebas) y ya estaba listo jaja oops
