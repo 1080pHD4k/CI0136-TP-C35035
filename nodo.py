@@ -57,6 +57,11 @@ def manejar_cliente(conexion, direccion, carpeta_compartidos, id_nodo="nodo"):
                 return
 
             ruta = carpeta_compartidos / nombre_archivo
+            if ruta.resolve().parent != carpeta_compartidos.resolve():
+                resultado = "ERROR nombre inválido"
+                enviar_json(conexion, {"estado": "ERROR", "mensaje": "nombre inválido"})
+                return
+
             if not ruta.is_file():
                 resultado = "ERROR archivo no encontrado"
                 enviar_json(conexion, {"estado": "ERROR", "mensaje": "archivo no encontrado"})

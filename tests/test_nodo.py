@@ -9,10 +9,15 @@ from tempfile import TemporaryDirectory
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import contextlib
+import io
+
 from nodo import (
+    descargar_remoto,
     iniciar_servidor,
     enviar_json,
     leer_linea,
+    listar_remoto,
     recibir_bytes_exactos,
 )
 
@@ -47,11 +52,15 @@ class TestNodoP2P(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = TemporaryDirectory()
         cls.carpeta = Path(cls.tmp.name)
+        cls.tmp2 = TemporaryDirectory()
+        cls.carpeta2 = Path(cls.tmp2.name)
         levantar_servidor_prueba(PUERTO_PRUEBA_1, cls.carpeta)
+        levantar_servidor_prueba(PUERTO_PRUEBA_2, cls.carpeta2)
 
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
+        cls.tmp2.cleanup()
 
     def test_listar_caso_normal(self):
         (self.carpeta / "a.txt").write_text("hola")
@@ -101,6 +110,34 @@ class TestNodoP2P(unittest.TestCase):
         s.close()
 
         self.assertEqual(recibido, contenido_original)
+
+    def test_descarga_en_ambos_sentidos(self):
+        contenido_1 = os.urandom(2048)
+        contenido_2 = os.urandom(4096)
+        (self.carpeta / "de1.bin").write_bytes(contenido_1)
+        (self.carpeta2 / "de2.bin").write_bytes(contenido_2)
+
+        with TemporaryDirectory() as d1, TemporaryDirectory() as d2:
+            with contextlib.redirect_stdout(io.StringIO()):
+                descargar_remoto("nodo1", PUERTO_PRUEBA_2, Path(d1), "de2.bin")
+                descargar_remoto("nodo2", PUERTO_PRUEBA_1, Path(d2), "de1.bin")
+            self.assertEqual((Path(d1) / "de2.bin").read_bytes(), contenido_2)
+            self.assertEqual((Path(d2) / "de1.bin").read_bytes(), contenido_1)
+
+    def test_ruta_no_permitida_rechazada(self):
+        respuesta, s = pedir(
+            PUERTO_PRUEBA_1, {"comando": "OBTENER", "archivo": "../archivo.txt"}
+        )
+        s.close()
+
+        self.assertEqual(respuesta["estado"], "ERROR")
+
+    def test_nodo_remoto_no_disponible(self):
+        salida = io.StringIO()
+        with contextlib.redirect_stdout(salida):
+            listar_remoto("nodo1", 13199)
+
+        self.assertIn("no disponible", salida.getvalue())
 
 
 if __name__ == "__main__":

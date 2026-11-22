@@ -6,7 +6,7 @@
 ## 1. Entorno y dependencias
 
 - Python 3.12.3, probado en Ubuntu Linux.
-- Dependencias: solo biblioteca estándar de Python (`socket`, `threading`, `json`, `pathlib`, `argparse`, `unittest`)
+- Dependencias: solo biblioteca estándar de Python (socket, threading, json, pathlib ,argparse, unittest)
 
 ## 2. Ejecución
 
@@ -27,8 +27,13 @@ Argumentos:
 - `--puerto`: puerto en el que este nodo escucha.
 - `--remoto`: puerto del nodo al que este le hará solicitudes.
 
-al iniciar cada nodo deberia imprimir:
+**Salida esperada de cada nodo:**
 ```
+Carné: C35035 | Variante: B
+Nodo nodo1, puerto 12160, remoto 12161
+Archivos compartidos: ['ejemplo1.txt', 'notas.txt', 'ejemplo.txt']
+Escuchando en puerto 12160
+
 1. Listar locales
 2. Listar remotos
 3. Descargar
@@ -37,7 +42,7 @@ al iniciar cada nodo deberia imprimir:
 
 ## 3. Preparación de datos
 
-Los archivos de muestra ya están incluidosen `nodo1/compartidos/notas.txt`, `nodo2/compartidos/imagen.bin`. Si se necesitan regenerar:
+Los archivos de muestra ya están incluidosen nodo1/compartidos/notas.txt y nodo2/compartidos/imagen.bin. Si se necesitan regenerar:
 
 ```bash
 echo "Archivo de prueba del nodo 1." > nodo1/compartidos/notas.txt
@@ -51,24 +56,25 @@ No se requiere ningún otro paso de configuración adicional
 ya con ambos nodos corriendo:
 
 **Caso normal:**
-- En nodo1, opción 2- listar remotos → debe mostrar los archivos dentro de nodo2/compartidos, en este caso solamente `['imagen.bin']`
-- En nodo1, opción 3, archivo `imagen.bin` → debe imprimir `Descargado imagen.bin (2048 bytes)` y crear `nodo1/descargas/imagen.bin`.
-- Para verificar integridad: `diff nodo2/compartidos/imagen.bin nodo1/descargas/imagen.bin && echo IDÉNTICOS` → debe imprimir `IDÉNTICOS` para confirmar.
+- En nodo2, opción 3, archivo notas.txt → debe imprimir Descargado notas.txt y crear nodo2/descargas/notas.txt, funciona en ambos sentidos
+- En nodo1, opción 2- listar remotos → debe mostrar los archivos dentro de nodo2/compartidos
+- En nodo1, opción 3, archivo imagen.bin → debe imprimir Descargado imagen.bin (2048 bytes) y crear nodo1/descargas/imagen.bin.
+- Para verificar integridad: diff nodo2/compartidos/imagen.bin nodo1/descargas/imagen.bin && echo IDÉNTICOS → debe imprimir IDÉNTICOS para confirmar.
 
 **Caso límite/concurrente:**
-- Colocar un archivo grande (por ejemplo de < 5 MB) en `compartidos/` y descargarlo igual que el segundo punto en el caso normal, debe completarse sin errores y el `diff` debe confirmar `IDÉNTICOS`. Esto lo que hace es que fuerza múltiples iteraciones del ciclo de lectura de bytes.
+- Generar un archivo de 60 KB con `python3 -c "import os; open('nodo2/compartidos/grande.bin','wb').write(os.urandom(60*1024))"` y descargarlo igual que el segundo punto en el caso normal, debe completarse sin errores y el diff debe confirmar IDÉNTICOS. Esto lo que hace es que fuerza múltiples iteraciones del ciclo de lectura de bytes.
 
 **Casos de error:**
-- En nodo1, opción 3, archivo `no_existe.txt` → debe imprimir `Error: archivo no encontrado`.
-- Cerrar nodo2 (Ctrl+C) y en nodo1 elegir opción `2` → debe imprimir `Error: nodo remoto no disponible`.
+- En nodo1, opción 3, archivo no_existe.txt → debe imprimir `Error: archivo no encontrado`.
+- Cerrar nodo2 (Ctrl+C) y en nodo1 elegir opción 2 → debe imprimir `Error: nodo remoto no disponible`.
 
 ## 5. Pruebas automatizadas
 
 ```bash
-python3 -m unittest discover tests -v
+python3 -m unittest discover -s tests -v
 ```
 
-Cada prueba levanta su propio servidor en un hilo, en el puerto de prueba 13160, y lo detiene automáticamente al terminar el proceso de `unittest` (el hilo es `daemon=True` y no requiere apagarlo manualmente). La prueba incluye 4 casos, listado normal, transferencia de archivo grande, solicitud de archivo inexistente y verificación de integridad de bytes.
+Las pruebas levantan dos servidores en hilos, en los puertos de prueba 13160 y 13161, y los detienen automáticamente al terminar el proceso de unittest. Son 7 pruebas: listado normal, transferencia de archivo grande, solicitud de archivo inexistente, integridad de bytes, descarga en ambos sentidos, ruta no permitida y nodo remoto no disponible.
 
 ## 6. Finalización y reinicio limpio
 
@@ -101,6 +107,4 @@ Ambos nodos ejecutan nodo.py diferenciados por sus argumentos de línea de coman
 - No hay un limite explicito de tamaño de archivo.
 - El nodo remoto se tiene que configurar manualmente con `--remoto`
 
-**Uso de IA:** se utilizó Claude (Anthropic) como asistente para la creación del **diagrama** de este archivo README.md en la sección 7, y como ayuda para detectar y corregir errores de código. En su mayoría el código fue escrito, ejecutado, probado y verificado personalmente por mí.
-
-**PD**: Profe perdon si hay pocos commits, creí que iba a necesitar más commits y archivos para completar el trabajo pero solo ocupé uno (y uno de pruebas) y ya estaba listo jaja oops
+**Uso de IA:** se utilizó Claude (Anthropic) como asistente para la creación del **diagrama** de este archivo README.md en la sección 7 y apoyo parcial en la redacción del mismo. También se utilizó como ayuda para detectar y corregir errores de código. El código fue escrito, ejecutado, probado y verificado personalmente por mí.
